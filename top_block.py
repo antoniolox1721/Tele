@@ -241,7 +241,7 @@ class top_block(gr.top_block, Qt.QWidget):
             taps=[1.0 ],
             noise_seed=0,
             block_tags=False)
-        self.blocks_vector_source_x_0 = blocks.vector_source_b([240,240,240,15,15,15,240,240,240,]+[19,62,19,19,62,40,19,62,83,]+[15,15,15,240,240,240,15,15,15,0,0,0,0,0,0,0,0], False, 1, [])
+        self.blocks_vector_source_x_0 = blocks.vector_source_b([240,240,240,15,15,15,240,240,240]+[10, 38, 33, 10, 74, 72, 11, 6, 34] +[15,15,15,240,240,240,15,15,15,0,0,0,0,0,0,0,0], False, 1, [])
         self.blocks_throttle2_0 = blocks.throttle( gr.sizeof_gr_complex*1, samp_rate, True, 0 if "auto" == "auto" else max( int(float(0.1) * samp_rate) if "auto" == "time" else int(0.1), 1) )
         self.blocks_pack_k_bits_bb_0 = blocks.pack_k_bits_bb(8)
         self.blocks_multiply_const_vxx_0 = blocks.multiply_const_ff(2)

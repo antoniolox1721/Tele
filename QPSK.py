@@ -15,7 +15,7 @@ from gnuradio.filter import firdes
 import time
 import os
 
-FILE_2_OFFSET = 49 * 0.02
+FILE_2_OFFSET = 49 
 DATA_SIZE = 216
 OUTPUT_FILENAME = "QPSKFINAL.xlsx"
 
@@ -48,6 +48,10 @@ def calc(file1, file2):
                 print(f"Insufficient data: need {required_bytes1}/{required_bytes2} bytes, got {len(content1)}/{len(content2)}")
                 return -1
 
+            # Skip offset in second file
+            offset_bytes = FILE_2_OFFSET // 8
+            offset_bits = FILE_2_OFFSET % 8
+
             differences = 0
             for i in range(DATA_SIZE):
                 # Get bit from first file
@@ -72,31 +76,24 @@ def calc(file1, file2):
 
 class top_block(gr.top_block):
     def __init__(self, noise_voltage, loop_bandwidth):
-        gr.top_block.__init__(self, "QPSK Analysis")
+        gr.top_block.__init__(self, "BPSK Analysis")
         
         ##################################################
-        # Variables with optimized parameters
+        # Variables
         ##################################################
-        self.sps = sps = 8  # Back to 8 samples per symbol for better accuracy
+        self.sps = sps = 8
         self.samp_rate = samp_rate = 32000
-        self.rolloff = rolloff = 0.75  # Back to original rolloff
-        self.rrc_taps = rrc_taps = firdes.root_raised_cosine(
-            1.0,           # Gain
-            samp_rate,     # Sampling rate
-            samp_rate/sps, # Symbol rate
-            rolloff,       # Roll-off factor
-            11*sps        # Number of taps
-        )
-        
-        # QPSK constellation with precise mapping
-        constellation = digital.constellation_calcdist([-1-1j, -1+1j, 1+1j, 1-1j], [0, 1, 3, 2],
-        4, 1, digital.constellation.AMPLITUDE_NORMALIZATION).base()
-        constellation.set_npwr(1.0)
-        self.QPSK = constellation
+        self.rolloff = rolloff = 0.75
+        self.rrc_taps = rrc_taps = firdes.root_raised_cosine(1.0, samp_rate, samp_rate/sps, rolloff, 11*sps)
+        self.noise_voltage = noise_voltage
+        self.loop_bandwidth = loop_bandwidth
+        self.BPSK = BPSK = digital.constellation_calcdist([-1 + 0j, 1 + 0j], [0, 1],
+        2, 1).base()
 
         ##################################################
         # Blocks
         ##################################################
+        # Input data - Fixed sequence as per requirements
         input_data = [240,240,240,15,15,15,240,240,240] + \
                     [10, 38, 33, 10, 74, 72, 11, 6, 34] + \
                     [15,15,15,240,240,240,15,15,15,0,0,0,0,0,0,0,0]
@@ -104,7 +101,7 @@ class top_block(gr.top_block):
         self.blocks_vector_source_x_0 = blocks.vector_source_b(input_data, False, 1, [])
 
         self.digital_constellation_modulator_0 = digital.generic_mod(
-            constellation=self.QPSK,
+            constellation=BPSK,
             differential=False,
             samples_per_symbol=sps,
             pre_diff_code=True,
@@ -117,43 +114,35 @@ class top_block(gr.top_block):
             frequency_offset=0.0,
             epsilon=1.0,
             taps=[1.0],
-            noise_seed=42,
+            noise_seed=0,
             block_tags=False)
 
         self.fir_filter_xxx_0 = filter.fir_filter_ccc(1, rrc_taps)
         self.fir_filter_xxx_0.declare_sample_delay(0)
 
         self.digital_symbol_sync_xx_0 = digital.symbol_sync_cc(
-            digital.TED_SIGNAL_TIMES_SLOPE_ML,  # Back to original timing error detector
+            digital.TED_SIGNAL_TIMES_SLOPE_ML,
             sps,
             loop_bandwidth,
-            1.0,    # Damping factor
-            4.0,    # Loop bandwidth
-            1.5,    # Ted gain
-            1,      # Maximum deviation
-            digital.constellation_qpsk().base(),
+            1.0,
+            1.0,
+            1.5,
+            1,
+            digital.constellation_bpsk().base(),
             digital.IR_MMSE_8TAP,
-            128,    # Back to original buffer size
-            []
-        )
+            128,
+            [])
 
-        # Demodulation chain
+        # Processing blocks
         self.blocks_throttle_0 = blocks.throttle(gr.sizeof_gr_complex*1, samp_rate, True)
         self.blocks_complex_to_real_0 = blocks.complex_to_real(1)
-        self.blocks_complex_to_imag_0 = blocks.complex_to_imag(1)
         self.digital_binary_slicer_fb_0 = digital.binary_slicer_fb()
-        self.digital_binary_slicer_fb_1 = digital.binary_slicer_fb()
-        self.blocks_char_to_float_0 = blocks.char_to_float(1, 1)
-        self.blocks_char_to_float_1 = blocks.char_to_float(1, 1)
-        self.blocks_multiply_const_vxx_0 = blocks.multiply_const_ff(2)
-        self.blocks_add_xx_0 = blocks.add_ff(1)
-        self.blocks_float_to_char_0 = blocks.float_to_char(1, 1)
         self.blocks_pack_k_bits_bb_0 = blocks.pack_k_bits_bb(8)
-
+        
         # File sinks
         self.blocks_file_sink_sent = blocks.file_sink(gr.sizeof_char*1, 'qpsk_sent.dat', False)
+        self.blocks_file_sink_sent.set_unbuffered(True)
         self.blocks_file_sink_rec = blocks.file_sink(gr.sizeof_char*1, 'qpsk_rec.dat', False)
-        self.blocks_file_sink_sent.set_unbuffered(True)  # Back to unbuffered for immediate writing
         self.blocks_file_sink_rec.set_unbuffered(True)
 
         ##################################################
@@ -166,24 +155,18 @@ class top_block(gr.top_block):
         self.connect((self.channels_channel_model_0, 0), (self.fir_filter_xxx_0, 0))
         self.connect((self.fir_filter_xxx_0, 0), (self.digital_symbol_sync_xx_0, 0))
         self.connect((self.digital_symbol_sync_xx_0, 0), (self.blocks_complex_to_real_0, 0))
-        self.connect((self.digital_symbol_sync_xx_0, 0), (self.blocks_complex_to_imag_0, 0))
         self.connect((self.blocks_complex_to_real_0, 0), (self.digital_binary_slicer_fb_0, 0))
-        self.connect((self.blocks_complex_to_imag_0, 0), (self.digital_binary_slicer_fb_1, 0))
-        self.connect((self.digital_binary_slicer_fb_0, 0), (self.blocks_char_to_float_0, 0))
-        self.connect((self.digital_binary_slicer_fb_1, 0), (self.blocks_char_to_float_1, 0))
-        self.connect((self.blocks_char_to_float_0, 0), (self.blocks_multiply_const_vxx_0, 0))
-        self.connect((self.blocks_multiply_const_vxx_0, 0), (self.blocks_add_xx_0, 0))
-        self.connect((self.blocks_char_to_float_1, 0), (self.blocks_add_xx_0, 1))
-        self.connect((self.blocks_add_xx_0, 0), (self.blocks_float_to_char_0, 0))
-        self.connect((self.blocks_float_to_char_0, 0), (self.blocks_pack_k_bits_bb_0, 0))
+        self.connect((self.digital_binary_slicer_fb_0, 0), (self.blocks_pack_k_bits_bb_0, 0))
         self.connect((self.blocks_pack_k_bits_bb_0, 0), (self.blocks_file_sink_rec, 0))
 
 def main():
     app = Qt.QApplication(sys.argv)
 
-    noise_voltages = [x/2 for x in range(9)]
-    loop_bandwidths = np.arange(0, 0.25, 0.0025)
+    # Test parameters
+    noise_voltages = [x/2 for x in range(9)]  # 0 to 4 in steps of 0.5
+    loop_bandwidths = np.arange(0, 0.25, 0.0025)  # 0 to 0.25 in steps of 0.0025
 
+    # Create DataFrame
     columns = ['Loop BW'] + [f'{n:.1f}' for n in noise_voltages]
     df = pd.DataFrame(columns=columns)
 
@@ -195,34 +178,38 @@ def main():
             for noise in noise_voltages:
                 print(f"  Noise voltage = {noise:.1f}", end='', flush=True)
                 
-                # Clean up old files
-                for filename in ['qpsk_sent.dat', 'qpsk_rec.dat']:
-                    if os.path.exists(filename):
-                        os.remove(filename)
-                
                 # Run flowgraph
                 tb = top_block(noise, bw)
                 tb.start()
-                time.sleep(2.0)  # Increased processing time
+                time.sleep(0.2)  # Give more time for data to flow
                 tb.stop()
                 tb.wait()
-                time.sleep(1.0)  # Increased file writing time
                 
+                # Calculate errors
                 differences = calc("qpsk_sent.dat", "qpsk_rec.dat")
                 row_data[f'{noise:.1f}'] = differences
                 print(f" -> {differences} errors")
                 
+                # Cleanup
                 del tb
-                time.sleep(0.5)
+                time.sleep(0.1)  # Add delay between tests
             
+            # Add row to DataFrame
             df = pd.concat([df, pd.DataFrame([row_data])], ignore_index=True)
-            df.to_excel(OUTPUT_FILENAME, index=False)
             
+            # Save progress
+            df.to_excel(OUTPUT_FILENAME, index=False)
+            df.to_csv('results.csv', index=False, sep='\t')
+    
     except KeyboardInterrupt:
-        print("\nInterrupted by user. Saving progress...")
+        print("\nInterrupted by user. Saving current progress...")
+    except Exception as e:
+        print(f"\nError during execution: {str(e)}")
     finally:
+        # Final save
         if not df.empty:
             df.to_excel(OUTPUT_FILENAME, index=False)
+            df.to_csv('results.csv', index=False, sep='\t')
 
 if __name__ == '__main__':
     main()
